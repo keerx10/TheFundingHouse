@@ -30,7 +30,7 @@ LIVE_REFRESH_SECONDS = _f("LIVE_REFRESH_SECONDS", 60)        # tasa prevista, pr
 SNAPSHOT_EVERY_SECONDS = _f("SNAPSHOT_EVERY_SECONDS", 300)   # cada cuanto se persiste el estado live
 HISTORY_SYNC_SECONDS = _f("HISTORY_SYNC_SECONDS", 1800)      # descarga de funding liquidado
 HISTORY_BACKFILL_DAYS = int(os.getenv("HISTORY_BACKFILL_DAYS", "31"))
-HISTORY_CONCURRENCY = int(os.getenv("HISTORY_CONCURRENCY", "4"))      # peticiones simultaneas por exchange
+HISTORY_CONCURRENCY = int(os.getenv("HISTORY_CONCURRENCY", "2"))      # peticiones simultaneas por exchange (HL devuelve 429 con mas)
 SNAPSHOT_RETENTION_DAYS = int(os.getenv("SNAPSHOT_RETENTION_DAYS", "60"))
 
 # Comisiones por exchange, tanto por uno sobre el nocional de cada pata.

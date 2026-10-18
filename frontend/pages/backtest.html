@@ -1,0 +1,103 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>TheFundingHouse | Backtest</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script src="https://unpkg.com/lucide@latest"></script>
+    <script>
+        tailwind.config = {
+            theme: {
+                extend: {
+                    colors: { bgDark: '#0f0e24', cardDark: '#1a1b3b', brandTeal: '#2dd4bf', brandPurple: '#8b5cf6' },
+                    fontFamily: { sans: ['Inter', 'sans-serif'] }
+                }
+            }
+        }
+    </script>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="../css/dashboard.css">
+    <style>
+        .filter-input { width: 100%; background:#1e1e30; border:1px solid rgba(255,255,255,0.1); border-radius:0.5rem; padding:0.5rem 0.75rem; font-size:0.875rem; color:white; }
+        .filter-input:focus { outline:none; border-color: rgba(45,212,191,0.5); }
+        .lbl { font-size:0.7rem; text-transform:uppercase; color:#94a3b8; margin-bottom:0.35rem; display:block; }
+        .stat { background:#15152b; border:1px solid rgba(255,255,255,0.06); border-radius:0.75rem; padding:0.9rem 1rem; }
+        .stat .v { font-size:1.4rem; font-weight:700; font-family: ui-monospace, monospace; }
+        .stat .k { font-size:0.7rem; text-transform:uppercase; color:#64748b; }
+        .pos { color:#4ade80; } .neg { color:#f87171; }
+    </style>
+</head>
+<body class="bg-bgDark text-white font-sans h-screen flex overflow-hidden">
+
+    <aside id="sidebar-container" class="w-64 bg-[#0a0918] border-r border-white/5 hidden md:flex flex-col z-40 h-full flex-shrink-0"></aside>
+
+    <main class="flex-1 flex flex-col h-full relative min-w-0">
+        <header class="bg-bgDark/95 backdrop-blur z-30 px-6 py-4 border-b border-white/5 flex-shrink-0">
+            <h1 class="text-2xl font-bold text-white">Backtest</h1>
+            <p class="text-xs text-slate-500 mt-1">
+                Simula la estrategia hora a hora sobre el funding <b>liquidado</b> guardado. Solo PnL de funding menos comisiones:
+                no modela diferencia de precio entre exchanges, slippage ni liquidaciones (es un techo optimista).
+            </p>
+        </header>
+
+        <div class="flex-1 overflow-auto p-6 custom-scrollbar space-y-6">
+
+            <form id="bt-form" class="grid grid-cols-2 md:grid-cols-4 xl:grid-cols-8 gap-3 bg-[#11112a] border border-white/10 rounded-xl p-4">
+                <div><label class="lbl">Días</label><input class="filter-input" name="days" type="number" value="31" min="1" max="400"></div>
+                <div><label class="lbl" title="Horas de funding real sobre las que se promedia la señal">Lookback (h)</label><input class="filter-input" name="lookback_hours" type="number" value="24" min="1"></div>
+                <div><label class="lbl" title="Spread APR medio mínimo para abrir">Entrada APR %</label><input class="filter-input" name="entry_apr" type="number" value="30" step="1"></div>
+                <div><label class="lbl" title="Se cierra cuando el spread medio cae por debajo">Salida APR %</label><input class="filter-input" name="exit_apr" type="number" value="10" step="1"></div>
+                <div><label class="lbl">Posiciones máx</label><input class="filter-input" name="max_positions" type="number" value="5" min="1"></div>
+                <div><label class="lbl">Nocional/pata $</label><input class="filter-input" name="notional" type="number" value="1000" min="1"></div>
+                <div><label class="lbl">Comisiones</label>
+                    <select class="filter-input" name="fee_mode"><option value="taker">Todo a mercado</option><option value="maker_entry">Entrada límite</option></select></div>
+                <div><label class="lbl">Máx. horas (opc.)</label><input class="filter-input" name="max_hold_hours" type="number" placeholder="∞" min="1"></div>
+                <div><label class="lbl">Solo token (opc.)</label><input class="filter-input" name="symbol" type="text" placeholder="BTC"></div>
+                <div class="col-span-2 md:col-span-3 xl:col-span-7 flex items-end justify-end gap-2">
+                    <span id="bt-msg" class="text-xs text-slate-500 mr-auto"></span>
+                    <button type="submit" id="bt-run" class="px-5 py-2 rounded-lg text-sm bg-brandTeal text-bgDark font-semibold hover:bg-teal-300">Ejecutar</button>
+                </div>
+            </form>
+
+            <div id="bt-summary" class="hidden grid grid-cols-2 md:grid-cols-4 xl:grid-cols-8 gap-3"></div>
+
+            <div id="bt-equity-wrap" class="hidden bg-[#11112a] border border-white/10 rounded-xl p-4">
+                <div class="flex justify-between items-center mb-2">
+                    <h3 class="text-sm font-semibold">PnL acumulado ($)</h3>
+                    <span id="bt-equity-range" class="text-xs text-slate-500"></span>
+                </div>
+                <svg id="bt-equity" viewBox="0 0 1000 220" class="w-full h-56" preserveAspectRatio="none"></svg>
+            </div>
+
+            <div class="grid grid-cols-1 xl:grid-cols-2 gap-6">
+                <div class="bg-[#11112a] border border-white/10 rounded-xl p-4 overflow-auto">
+                    <h3 class="text-sm font-semibold mb-3">Por token</h3>
+                    <table class="w-full text-left text-sm">
+                        <thead class="text-slate-500 text-xs uppercase"><tr><th class="py-2">Token</th><th>Trades</th><th>Horas</th><th>Funding</th><th>Comisiones</th><th>Neto</th></tr></thead>
+                        <tbody id="bt-by-pair"><tr><td colspan="6" class="py-6 text-center text-slate-500">Sin resultados todavía</td></tr></tbody>
+                    </table>
+                </div>
+                <div class="bg-[#11112a] border border-white/10 rounded-xl p-4 overflow-auto">
+                    <h3 class="text-sm font-semibold mb-3">Trades</h3>
+                    <table class="w-full text-left text-xs">
+                        <thead class="text-slate-500 uppercase"><tr><th class="py-2">Token</th><th>L / S</th><th>Entrada</th><th>Horas</th><th>APR in→out</th><th>Neto</th><th>Salida</th></tr></thead>
+                        <tbody id="bt-trades"><tr><td colspan="7" class="py-6 text-center text-slate-500">Sin resultados todavía</td></tr></tbody>
+                    </table>
+                </div>
+            </div>
+        </div>
+    </main>
+
+    <script src="../js/components.js"></script>
+    <script src="../js/backtest.js"></script>
+    <script>
+        document.addEventListener('DOMContentLoaded', () => {
+            renderSidebar();
+            lucide.createIcons();
+            loadStatus();
+            initBacktest();
+        });
+    </script>
+</body>
+</html>

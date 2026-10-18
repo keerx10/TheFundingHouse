@@ -6,12 +6,14 @@ TheFundingHouse: API + frontend estatico en un solo proceso FastAPI.
   GET  /api/funding/live           pares con la tasa prevista actual
   GET  /api/funding/{1h..31d}      pares con la media del funding LIQUIDADO en la ventana
   GET  /api/funding/series/{sym}   serie horaria de funding por exchange (para graficas)
+  GET  /api/backtest               simula la estrategia sobre el funding liquidado (ver backtest.py)
   GET  /api/token/logos?symbols=   logos (CoinGecko, cacheados)
   POST /api/admin/refresh-live     fuerza un refresh live
   POST /api/admin/sync-history     fuerza una descarga de historico
   /                                frontend (carpeta frontend/)
 """
 
+import asyncio
 import time
 from contextlib import asynccontextmanager
 from datetime import datetime, timezone
@@ -21,7 +23,7 @@ from fastapi import FastAPI, HTTPException, Query
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 
-from . import __version__, analytics, config, logos
+from . import __version__, analytics, backtest, config, logos
 from .adapters import BackpackAdapter, HyperliquidAdapter
 from .scheduler import Scheduler
 from .store import Store
@@ -115,6 +117,35 @@ async def funding_window(
     rows = store.history_window(int(time.time() - hours * 3600))
     pairs = analytics.compute_window_pairs(rows, scheduler.latest, hours)
     return analytics.filter_pairs(pairs, min_spread_apr_percent, canonical_symbol, exchange_in, exchange_out, limit)
+
+
+# ---------------- backtest ----------------
+
+@app.get("/api/backtest")
+async def api_backtest(
+    days: int = Query(31, ge=1, le=400),
+    lookback_hours: int = Query(24, ge=1, le=720),
+    entry_apr: float = Query(30.0, ge=0),
+    exit_apr: float = Query(10.0),
+    max_positions: int = Query(5, ge=1, le=100),
+    notional: float = Query(1000.0, gt=0),
+    fee_mode: str = Query("taker", pattern="^(taker|maker_entry)$"),
+    min_hold_hours: int = Query(1, ge=0),
+    max_hold_hours: Optional[int] = Query(None, ge=1),
+    min_coverage: float = Query(0.7, ge=0, le=1),
+    symbol: Optional[str] = Query(None),
+    include_equity: bool = Query(True),
+):
+    """Simula la estrategia sobre el funding liquidado guardado. Ver tfh/backtest.py para las reglas."""
+    params = backtest.Params(
+        days=days, lookback_hours=lookback_hours, entry_apr=entry_apr, exit_apr=exit_apr,
+        max_positions=max_positions, notional=notional, fee_mode=fee_mode, min_hold_hours=min_hold_hours,
+        max_hold_hours=max_hold_hours, min_coverage=min_coverage, symbol=symbol,
+    )
+    result = await asyncio.to_thread(backtest.run_backtest, store, params)
+    if not include_equity:
+        result.pop("equity", None)
+    return result
 
 
 # ---------------- logos ----------------

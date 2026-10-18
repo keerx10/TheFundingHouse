@@ -1,4 +1,13 @@
 // --- 1. Sidebar ---
+function sidebarLink(page, icon, label) {
+    const active = window.location.pathname.endsWith("/" + page);
+    const cls = active
+        ? "bg-[#1e1b4b] text-brandTeal border border-teal-500/20"
+        : "text-slate-400 hover:text-white hover:bg-white/5 border border-transparent";
+    return `<a href="${page}" class="flex items-center gap-3 px-4 py-3 rounded-xl font-medium transition-colors ${cls}">
+        <i data-lucide="${icon}" class="w-5 h-5"></i>${label}</a>`;
+}
+
 function renderSidebar() {
     const container = document.getElementById("sidebar-container");
     if (!container) return;
@@ -15,10 +24,8 @@ function renderSidebar() {
     </div>
 
     <nav class="flex-1 px-4 py-4 space-y-2">
-        <a href="#" class="flex items-center gap-3 px-4 py-3 bg-[#1e1b4b] text-brandTeal rounded-xl font-medium border border-teal-500/20 transition-colors">
-            <i data-lucide="bar-chart-2" class="w-5 h-5"></i>
-            Funding Explorer
-        </a>
+        ${sidebarLink("dashboard.html", "bar-chart-2", "Funding Explorer")}
+        ${sidebarLink("backtest.html", "flask-conical", "Backtest")}
     </nav>
 
     <div id="sidebar-status" class="p-4 border-t border-white/5 mt-auto text-xs text-slate-500 space-y-1">

@@ -8,7 +8,9 @@ Backpack Exchange Adapter (API publica)
 - /fundingRates  -> funding liquidado por hora (historico)
 """
 
+import asyncio
 import os
+import random
 from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional
 
@@ -18,6 +20,8 @@ from .base import ExchangeAdapter
 
 BACKPACK_BASE_URL = os.getenv("BACKPACK_BASE_URL", "https://api.backpack.exchange/api/v1")
 MARKETS_CACHE_TTL_SECONDS = 600
+RETRIES = 4
+RETRY_BACKOFF_SECONDS = 1.0
 
 
 class BackpackAdapter(ExchangeAdapter):
@@ -31,15 +35,23 @@ class BackpackAdapter(ExchangeAdapter):
         await self._client.aclose()
 
     async def _get(self, path: str, params: Optional[Dict[str, Any]] = None) -> Any:
-        try:
-            resp = await self._client.get(path, params=params)
-            resp.raise_for_status()
-            return resp.json()
-        except httpx.HTTPStatusError as exc:
-            body = exc.response.text[:200] if exc.response is not None else ""
-            raise RuntimeError(f"Backpack GET {path} failed status={exc.response.status_code} body={body}")
-        except httpx.RequestError as exc:
-            raise RuntimeError(f"Backpack GET {path} request error: {exc}")
+        """GET con reintentos (backoff) ante 429 / 5xx / errores de red."""
+        last_error = ""
+        for attempt in range(RETRIES):
+            try:
+                resp = await self._client.get(path, params=params)
+                if resp.status_code == 429 or resp.status_code >= 500:
+                    last_error = f"status={resp.status_code}"
+                else:
+                    resp.raise_for_status()
+                    return resp.json()
+            except httpx.HTTPStatusError as exc:
+                body = exc.response.text[:200] if exc.response is not None else ""
+                raise RuntimeError(f"Backpack GET {path} failed status={exc.response.status_code} body={body}")
+            except httpx.RequestError as exc:
+                last_error = str(exc)
+            await asyncio.sleep(RETRY_BACKOFF_SECONDS * (2 ** attempt) * (0.5 + random.random()))
+        raise RuntimeError(f"Backpack GET {path} failed after {RETRIES} attempts: {last_error}")
 
     # ------------------- Metadata de mercados -------------------
 

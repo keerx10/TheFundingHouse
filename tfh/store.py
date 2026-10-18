@@ -107,6 +107,17 @@ class Store:
             ).fetchall()
         return [dict(r) for r in rows]
 
+    def history_rows(self, since_ts: int, canonical: Optional[str] = None) -> List[Dict[str, Any]]:
+        """Filas crudas (exchange, canonical_symbol, ts, funding_rate, interval_hours) desde since_ts."""
+        sql = "SELECT exchange, canonical_symbol, ts, funding_rate, interval_hours FROM funding_history WHERE ts > ?"
+        args: List[Any] = [int(since_ts)]
+        if canonical:
+            sql += " AND canonical_symbol = ?"
+            args.append(canonical)
+        with self._lock:
+            rows = self._conn.execute(sql + " ORDER BY ts", args).fetchall()
+        return [dict(r) for r in rows]
+
     def history_summary(self) -> Dict[str, Any]:
         with self._lock:
             row = self._conn.execute(

@@ -8,7 +8,9 @@ Filtra los mercados con isDelisted. No usamos hyperliquid-python-sdk (su constru
 rompe con la API actual y solo necesitamos estas dos consultas).
 """
 
+import asyncio
 import os
+import random
 from datetime import datetime, timedelta, timezone
 from typing import Any, Dict, List, Optional
 
@@ -18,6 +20,8 @@ from .base import ExchangeAdapter
 
 HYPERLIQUID_API_URL = os.getenv("HYPERLIQUID_API_URL", "https://api.hyperliquid.xyz")
 FUNDING_INTERVAL_HOURS = 1.0
+RETRIES = 4
+RETRY_BACKOFF_SECONDS = 1.0
 
 
 class HyperliquidAdapter(ExchangeAdapter):
@@ -33,16 +37,24 @@ class HyperliquidAdapter(ExchangeAdapter):
         await self._client.aclose()
 
     async def _info(self, payload: Dict[str, Any]) -> Any:
+        """POST /info con reintentos (backoff) ante 429 / 5xx / errores de red."""
         url = f"{HYPERLIQUID_API_URL.rstrip('/')}/info"
-        try:
-            resp = await self._client.post(url, json=payload)
-            resp.raise_for_status()
-            return resp.json()
-        except httpx.HTTPStatusError as exc:
-            body = exc.response.text[:200] if exc.response is not None else ""
-            raise RuntimeError(f"Hyperliquid /info {payload.get('type')} failed status={exc.response.status_code} body={body}")
-        except httpx.RequestError as exc:
-            raise RuntimeError(f"Hyperliquid /info {payload.get('type')} request error: {exc}")
+        last_error = ""
+        for attempt in range(RETRIES):
+            try:
+                resp = await self._client.post(url, json=payload)
+                if resp.status_code == 429 or resp.status_code >= 500:
+                    last_error = f"status={resp.status_code}"
+                else:
+                    resp.raise_for_status()
+                    return resp.json()
+            except httpx.HTTPStatusError as exc:
+                body = exc.response.text[:200] if exc.response is not None else ""
+                raise RuntimeError(f"Hyperliquid /info {payload.get('type')} failed status={exc.response.status_code} body={body}")
+            except httpx.RequestError as exc:
+                last_error = str(exc)
+            await asyncio.sleep(RETRY_BACKOFF_SECONDS * (2 ** attempt) * (0.5 + random.random()))
+        raise RuntimeError(f"Hyperliquid /info {payload.get('type')} failed after {RETRIES} attempts: {last_error}")
 
     async def _ensure_cache(self) -> None:
         now = datetime.now(timezone.utc)
