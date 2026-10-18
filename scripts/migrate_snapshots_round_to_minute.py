@@ -46,22 +46,22 @@ def main():
         ops = []
         ids = []
         for doc in docs:
+            doc_id = doc.pop("_id", None)
             ts = doc.get("timestamp")
             if not ts:
-                ids.append(doc.get("_id"))
+                ids.append(doc_id)
                 continue
             ts_norm = minute_floor(ts)
-            doc.pop("_id", None)
             doc["timestamp"] = ts_norm
             doc.setdefault("source", "live")
             ops.append(
                 pymongo.UpdateOne(
                     {"pair_id": doc.get("pair_id"), "timestamp": ts_norm, "source": doc.get("source")},
-                    {"$set": doc, "$setOnInsert": doc},
+                    {"$set": doc},
                     upsert=True,
                 )
             )
-            ids.append(doc.get("_id"))
+            ids.append(doc_id)
         if ops:
             res = col.bulk_write(ops, ordered=False)
             migrated += res.upserted_count + res.modified_count

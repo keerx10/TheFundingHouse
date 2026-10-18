@@ -38,8 +38,8 @@ services:
       MONGO_URI: mongodb://root:example@mongo:27017
       MONGO_DB: tfh
       PORT: 8001
-      REFRESH_INTERVAL_SECONDS: 300   # 👈 CRON CADA 5 MINUTOS
       BACKPACK_BASE_URL: https://api.backpack.exchange/api/v1
+      TIMESERIES_TTL_DAYS: 60   # retencion de funding_timeseries
     depends_on:
       - mongo
     ports:
@@ -56,6 +56,13 @@ services:
       MONGO_URI: mongodb://root:example@mongo:27017
       MONGO_DB: tfh
       PORT: 8002
+      # Comisiones (tanto por uno) usadas para net APR y breakeven. Ajusta a tu tier real.
+      FEE_HYPERLIQUID_TAKER: 0.00045
+      FEE_HYPERLIQUID_MAKER: 0.00015
+      FEE_BACKPACK_TAKER: 0.0005
+      FEE_BACKPACK_MAKER: 0.0002
+      NET_APR_HORIZON_HOURS: 24
+      SNAPSHOT_INTERVAL_SECONDS: 60   # debe coincidir con SNAPSHOTS_EVERY_SECONDS del scheduler
     depends_on:
       - mongo
     ports:
@@ -73,8 +80,6 @@ services:
     restart: unless-stopped
     environment:
       DATA_INGESTION_BASE_URL: http://data_ingestion:8001
-      BACKPACK_BASE_URL: http://data_ingestion:8001
-      HYPERLIQUID_BASE_URL: http://data_ingestion:8001
       FUNDING_ANALYTICS_BASE_URL: http://funding_analytics:8002
       MARKETS_EVERY_SECONDS: 60
       SNAPSHOTS_EVERY_SECONDS: 60

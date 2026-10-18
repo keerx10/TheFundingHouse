@@ -39,6 +39,8 @@ let logoMap = {};
 let filtersState = {
     aprMin: null,
     aprMax: null,
+    netAprMin: null,
+    breakevenMax: null,
     priceMin: null,
     priceMax: null,
     oiMin: null,
@@ -65,25 +67,7 @@ function safeJsonParse(str) {
 
 function initUIInteractions() {
     if (__tfhInitDone) return;
-    // A. Dropdown de Plataformas
-    const btn = document.getElementById("platforms-btn");
-    const dropdown = document.getElementById("platforms-dropdown");
-
-    if (btn && dropdown) {
-        btn.addEventListener("click", (e) => {
-            e.stopPropagation();
-            dropdown.classList.toggle("hidden");
-        });
-
-        // Cerrar si clic fuera
-        document.addEventListener("click", (e) => {
-            if (!btn.contains(e.target) && !dropdown.contains(e.target)) {
-                dropdown.classList.add("hidden");
-            }
-        });
-    }
-
-    // B. Popover de filtros
+    // A. Popover de filtros
     const filtersBtn = document.getElementById("filters-btn");
     const filtersPopover = document.getElementById("filters-popover");
     const applyBtn = document.getElementById("apply-filters-btn");
@@ -218,6 +202,24 @@ function initDashboard() {
         localStorage.removeItem("tfh_wallet");
     }
     loadFunding("live");
+    loadFeesNotice();
+}
+
+async function loadFeesNotice() {
+    const el = document.getElementById("funding-fees-notice");
+    if (!el) return;
+    try {
+        const res = await fetch("/api/funding/config");
+        if (!res.ok) return;
+        const cfg = await res.json();
+        const pct = (v) => `${(Number(v) * 100).toFixed(3)}%`;
+        const parts = Object.entries(cfg.fees || {}).map(
+            ([ex, f]) => `${ex}: taker ${pct(f.taker)} / maker ${pct(f.maker)}`,
+        );
+        el.textContent = `Comisiones usadas → ${parts.join(" · ")} · Net APR a ${cfg.net_apr_horizon_hours}h de mantenimiento`;
+    } catch (e) {
+        /* sin aviso de comisiones */
+    }
 }
 
 async function loadFunding(timeframe) {
@@ -226,17 +228,8 @@ async function loadFunding(timeframe) {
         document.getElementById("funding-table-body");
     if (!tableBody) return;
 
-    // Si no es live, mostrar no disponible y no llamar backend
-    if (timeframe !== "live") {
-        tableBody.innerHTML =
-            '<tr><td colspan="8" class="text-center py-10 text-slate-400">Temporalidad no disponible por el momento</td></tr>';
-        allRows = [];
-        filteredRows = [];
-        return;
-    }
-
     tableBody.innerHTML =
-        '<tr><td colspan="8" class="text-center py-10 text-slate-400">Loading...</td></tr>';
+        '<tr><td colspan="10" class="text-center py-10 text-slate-400">Loading...</td></tr>';
 
     try {
         const params = new URLSearchParams({
@@ -266,15 +259,18 @@ async function loadFunding(timeframe) {
         })();
 
         const res = await fetch(`${endpoint}?${params.toString()}`);
+        // Respuesta obsoleta: el usuario ya cambio de temporalidad
+        if (timeframe !== currentTimeframe) return;
         if (!res.ok) {
             console.error("Failed to fetch funding data", res.status);
             tableBody.innerHTML =
-                '<tr><td colspan="8" class="text-center py-4 text-red-400">Not implemented</td></tr>';
+                '<tr><td colspan="10" class="text-center py-4 text-red-400">Not implemented</td></tr>';
             allRows = [];
             filteredRows = [];
             return;
         }
         const data = await res.json();
+        if (timeframe !== currentTimeframe) return;
 
         data.sort(
             (a, b) =>
@@ -285,9 +281,10 @@ async function loadFunding(timeframe) {
         allRows = data;
         recomputeAndRender();
     } catch (err) {
+        if (timeframe !== currentTimeframe) return;
         console.error("Error loading funding live:", err);
         tableBody.innerHTML =
-            '<tr><td colspan="8" class="text-center py-4 text-red-400">Error loading data</td></tr>';
+            '<tr><td colspan="10" class="text-center py-4 text-red-400">Error loading data</td></tr>';
         allRows = [];
         filteredRows = [];
     }
@@ -299,34 +296,37 @@ function renderFundingRows(data) {
         document.getElementById("funding-table-body");
     if (!tableBody) return;
 
-    // Mensaje global si todo viene de live fallback
-    const allFallbackLive =
+    // Aviso global si la ventana tiene poca cobertura en todos los pares
+    const allPartial =
+        currentTimeframe !== "live" &&
         Array.isArray(data) &&
         data.length > 0 &&
-        data.every((p) => p.mode === "fallback_live" || p.data_source === "live_fallback");
+        data.every((p) => p.is_partial);
     const globalNotice = document.getElementById("funding-global-notice");
-    if (globalNotice) {
-        if (allFallbackLive) {
-            globalNotice.classList.remove("hidden");
-        } else {
-            globalNotice.classList.add("hidden");
-        }
-    }
+    if (globalNotice) globalNotice.classList.toggle("hidden", !allPartial);
 
     if (!data || data.length === 0) {
         tableBody.innerHTML =
-            '<tr><td colspan="8" class="text-center py-10 text-slate-400">No data available</td></tr>';
+            '<tr><td colspan="10" class="text-center py-10 text-slate-400">No data available</td></tr>';
         return;
     }
 
     const fmtPercent = (v) => (v == null ? "-" : `${Number(v).toFixed(1)}%`);
+    const fmtPercent2 = (v) => (v == null ? "-" : `${Number(v).toFixed(2)}%`);
     const fmtNum = (v) => {
         const num = Number(v);
         if (!isFinite(num)) return "-";
         if (num >= 1_000_000_000) return (num / 1_000_000_000).toFixed(1) + "B";
         if (num >= 1_000_000) return (num / 1_000_000).toFixed(1) + "M";
         if (num >= 1_000) return (num / 1_000).toFixed(1) + "K";
-        return num.toString();
+        return num.toFixed(0);
+    };
+    const fmtHours = (h) => {
+        const num = Number(h);
+        if (!Number.isFinite(num) || num <= 0) return "-";
+        if (num < 1) return `${Math.round(num * 60)}m`;
+        if (num < 48) return `${num.toFixed(1)}h`;
+        return `${(num / 24).toFixed(1)}d`;
     };
 
     tableBody.innerHTML = "";
@@ -389,22 +389,40 @@ function renderFundingRows(data) {
         const tr = document.createElement("tr");
         tr.className =
             "hover:bg-white/5 transition-colors group border-b border-white/5";
-        const fallbackBadge =
-            pair.mode === "fallback_live"
-                ? `<span class="ml-2 text-[11px] text-amber-300 whitespace-nowrap">Calculando ventana ${currentTimeframe} (mostrando live temporalmente)</span>`
+        const netApr = Number(pair.net_apr_percent);
+        const netAprClass = Number.isFinite(netApr) && netApr > 0 ? "text-green-400" : "text-red-400";
+        const breakevenText = fmtHours(pair.breakeven_hours);
+        const breakevenTitle =
+            pair.breakeven_hours_maker_entry != null
+                ? `Entrando con órdenes límite (maker): ${fmtHours(pair.breakeven_hours_maker_entry)}`
                 : "";
+
+        // Columna "Data": en Live, próximo funding; en ventanas, cobertura real de snapshots
+        let dataCell = "";
+        if (pair.coverage_ratio != null) {
+            const cov = Math.round(Number(pair.coverage_ratio) * 100);
+            const covClass = pair.is_partial ? "text-amber-300" : "text-slate-400";
+            dataCell = `<span class="${covClass}" title="${pair.window_count ?? 0} snapshots de ${Math.round(pair.expected_count ?? 0)} esperados">${cov}% · ${fmtNum(pair.window_count ?? 0)} pts</span>`;
+        } else {
+            const nft = long.next_funding_time || short.next_funding_time;
+            const mins = nft ? Math.max(0, Math.round((new Date(nft) - Date.now()) / 60000)) : null;
+            dataCell = mins == null ? "live" : `<span title="Próximo pago de funding">live · ${mins}m</span>`;
+        }
 
         tr.innerHTML = `
             <td class="px-4 py-3 text-slate-400 first:rounded-l-lg">${i + 1}</td>
             <td class="px-4 py-3 text-white whitespace-nowrap">
                 <div class="inline-flex items-center gap-2 whitespace-nowrap" style="line-height:1;">
                     ${tokenVisual}
-                    <span class="font-semibold inline-block">${pair.canonical_symbol || pair.pair_id || "-"}${fallbackBadge}</span>
+                    <span class="font-semibold inline-block">${pair.canonical_symbol || pair.pair_id || "-"}</span>
                 </div>
             </td>
             <td class="px-4 py-3 text-brandTeal font-mono">${fmtPercent(pair.spread_apr_percent)}</td>
-            <td class="px-4 py-3 text-slate-300 text-xs">
-                ${longExchange.substring(0, 2).toUpperCase()} / ${shortExchange.substring(0, 2).toUpperCase()}
+            <td class="px-4 py-3 font-mono ${netAprClass}" title="Comisiones ida y vuelta: ${fmtPercent2(pair.fee_round_trip_percent)} · horizonte ${pair.net_apr_horizon_hours ?? "-"}h">${fmtPercent(pair.net_apr_percent)}</td>
+            <td class="px-4 py-3 text-slate-300 font-mono" title="${breakevenTitle}">${breakevenText}</td>
+            <td class="px-4 py-3 text-xs whitespace-nowrap">
+                <div class="text-green-400/80">L: ${longExchange} <span class="text-slate-500">${fmtPercent(long.apr_percent)}</span></div>
+                <div class="text-red-400/80">S: ${shortExchange} <span class="text-slate-500">${fmtPercent(short.apr_percent)}</span></div>
             </td>
             <td class="px-4 py-3 text-slate-400 font-mono hidden md:table-cell">${priceSpreadPctText}</td>
             <td class="px-4 py-3 text-slate-400 font-mono text-xs hidden md:table-cell">
@@ -413,17 +431,11 @@ function renderFundingRows(data) {
                 <div class="text-slate-400/70 text-[12px]">T: ${totalOi}</div>
             </td>
             <td class="px-4 py-3 text-slate-500 font-mono text-xs hidden md:table-cell">
-                <div class="flex items-center justify-between gap-2">
-                    <div>
-                        <div class="text-green-400/70">L: ${volLText}</div>
-                        <div class="text-red-400/70">S: ${volSText}</div>
-                        <div class="text-slate-400/70 text-[12px]">T: ${totalVolText}</div>
-                    </div>
-                </div>
+                <div class="text-green-400/70">L: ${volLText}</div>
+                <div class="text-red-400/70">S: ${volSText}</div>
+                <div class="text-slate-400/70 text-[12px]">T: ${totalVolText}</div>
             </td>
-            <td class="px-4 py-3 text-right last:rounded-r-lg">
-                <button class="text-brandTeal hover:bg-brandTeal/10 p-2 rounded transition-colors"><i data-lucide="external-link" class="w-4 h-4"></i></button>
-            </td>
+            <td class="px-4 py-3 text-xs text-right hidden lg:table-cell last:rounded-r-lg">${dataCell}</td>
         `;
         tableBody.appendChild(tr);
     });
@@ -490,15 +502,13 @@ function matchesBounds(val, min, max) {
 }
 
 function computeOiUsd(mkt) {
+    // El backend ya calcula open_interest_usd; ambos exchanges reportan OI en monedas.
+    const usd = Number(mkt?.open_interest_usd);
+    if (Number.isFinite(usd) && usd > 0) return usd;
     const oi = Number(mkt?.open_interest);
     const price = Number(mkt?.mark_price);
-    const ex = (mkt?.exchange || "").toString().toLowerCase();
-    if (!Number.isFinite(oi) || oi <= 0) return null;
-    if (ex === "hyperliquid") {
-        if (!Number.isFinite(price) || price <= 0) return null;
-        return oi * price;
-    }
-    return oi;
+    if (!Number.isFinite(oi) || oi <= 0 || !Number.isFinite(price) || price <= 0) return null;
+    return oi * price;
 }
 
 function computePriceSpreadPct(pair) {
@@ -530,6 +540,14 @@ function filterRows(data, filters) {
     return (data || []).filter((pair) => {
         const spreadVal = Number(pair.spread_apr_percent);
         if (!matchesBounds(spreadVal, filters.aprMin, filters.aprMax)) return false;
+
+        const netApr = Number(pair.net_apr_percent);
+        if (!matchesBounds(netApr, filters.netAprMin, null)) return false;
+
+        if (filters.breakevenMax != null) {
+            const breakeven = Number(pair.breakeven_hours);
+            if (!Number.isFinite(breakeven) || breakeven > filters.breakevenMax) return false;
+        }
 
         const priceSpreadVal = computePriceSpreadPct(pair);
         if (!matchesBounds(priceSpreadVal, filters.priceMin, filters.priceMax))
@@ -573,6 +591,8 @@ function resetFilters() {
     filtersState = {
         aprMin: null,
         aprMax: null,
+        netAprMin: null,
+        breakevenMax: null,
         priceMin: null,
         priceMax: null,
         oiMin: null,

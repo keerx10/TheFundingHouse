@@ -256,13 +256,11 @@ async def portfolio_overview(user=Depends(get_current_user)):
     }
 
 
-@app.api_route(
-    "/api/v1/data-ingestion/{path:path}",
-    methods=["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
-)
+@app.api_route("/api/v1/data-ingestion/{path:path}", methods=["GET"])
 async def proxy_data_ingestion(request: Request, path: str) -> Response:
     """
-    Proxy sencillo hacia data-ingestion.
+    Proxy de solo lectura hacia data-ingestion. Los POST (refresh, bootstrap) solo
+    los lanza el scheduler por la red interna, nunca desde el navegador.
     /api/v1/data-ingestion/status  ->  http://localhost:8001/status
     """
     target_url = f"{DATA_INGESTION_URL}/{path}".rstrip("/")
@@ -296,112 +294,40 @@ async def proxy_data_ingestion(request: Request, path: str) -> Response:
     )
 
 
-@app.get("/api/funding/live")
-async def proxy_funding_live(
-    min_spread_apr_percent: float = 0.0,
-    limit: int = 100,
-):
-    """
-    Proxy to the funding-analytics /funding/live endpoint.
-    """
-    upstream_url = FUNDING_ANALYTICS_BASE_URL.rstrip("/") + "/funding/live"
-    params = {
-        "min_spread_apr_percent": min_spread_apr_percent,
-        "limit": limit,
-    }
+FUNDING_VIEWS = {"live", "1h", "8h", "24h", "3d", "7d", "15d", "31d"}
+
+
+async def _proxy_funding_get(path: str, params) -> JSONResponse:
+    upstream_url = FUNDING_ANALYTICS_BASE_URL.rstrip("/") + path
     try:
-        async with httpx.AsyncClient(timeout=10.0) as client:
+        async with httpx.AsyncClient(timeout=15.0) as client:
             resp = await client.get(upstream_url, params=params)
     except httpx.RequestError as exc:
-        raise HTTPException(
-            status_code=502,
-            detail=f"Error calling funding-analytics: {exc}",
-        )
+        raise HTTPException(status_code=502, detail=f"Error calling funding-analytics: {exc}")
 
     if resp.status_code != 200:
         raise HTTPException(
             status_code=502,
-            detail={
-                "message": "Funding live service returned error",
-                "status": resp.status_code,
-                "body": resp.text,
-            },
-        )
-
-    data = resp.json()
-    return JSONResponse(content=data)
-
-
-async def _proxy_funding_window(window: str, query: dict):
-    upstream_url = FUNDING_ANALYTICS_BASE_URL.rstrip("/") + f"/funding/{window}"
-    try:
-        async with httpx.AsyncClient(timeout=10.0) as client:
-            resp = await client.get(upstream_url, params=query)
-    except httpx.RequestError as exc:
-        raise HTTPException(
-            status_code=502,
-            detail=f"Error calling funding-analytics: {exc}",
-        )
-
-    if resp.status_code != 200:
-        raise HTTPException(
-            status_code=502,
-            detail={
-                "message": f"Funding {window} service returned error",
-                "status": resp.status_code,
-                "body": resp.text,
-            },
+            detail={"message": f"funding-analytics {path} returned error", "status": resp.status_code, "body": resp.text},
         )
     return JSONResponse(content=resp.json())
 
 
-@app.get("/api/funding/1h")
-async def proxy_funding_1h(min_spread_apr_percent: float = 0.0, limit: int = 100):
-    return await _proxy_funding_window(
-        "1h", {"min_spread_apr_percent": min_spread_apr_percent, "limit": limit}
-    )
+@app.get("/api/funding/config")
+async def proxy_funding_config():
+    """Comisiones y parametros de calculo usados por funding-analytics."""
+    return await _proxy_funding_get("/funding/config", None)
 
 
-@app.get("/api/funding/8h")
-async def proxy_funding_8h(min_spread_apr_percent: float = 0.0, limit: int = 100):
-    return await _proxy_funding_window(
-        "8h", {"min_spread_apr_percent": min_spread_apr_percent, "limit": limit}
-    )
-
-
-@app.get("/api/funding/24h")
-async def proxy_funding_24h(min_spread_apr_percent: float = 0.0, limit: int = 100):
-    return await _proxy_funding_window(
-        "24h", {"min_spread_apr_percent": min_spread_apr_percent, "limit": limit}
-    )
-
-
-@app.get("/api/funding/3d")
-async def proxy_funding_3d(min_spread_apr_percent: float = 0.0, limit: int = 100):
-    return await _proxy_funding_window(
-        "3d", {"min_spread_apr_percent": min_spread_apr_percent, "limit": limit}
-    )
-
-
-@app.get("/api/funding/7d")
-async def proxy_funding_7d(min_spread_apr_percent: float = 0.0, limit: int = 100):
-    return await _proxy_funding_window(
-        "7d", {"min_spread_apr_percent": min_spread_apr_percent, "limit": limit}
-    )
-
-
-@app.get("/api/funding/15d")
-async def proxy_funding_15d(min_spread_apr_percent: float = 0.0, limit: int = 100):
-    return await _proxy_funding_window(
-        "15d", {"min_spread_apr_percent": min_spread_apr_percent, "limit": limit}
-    )
-
-
-@app.get("/api/funding/31d")
-async def proxy_funding_31d(min_spread_apr_percent: float = 0.0, limit: int = 100):
-    return await _proxy_funding_window(
-        "31d", {"min_spread_apr_percent": min_spread_apr_percent, "limit": limit}
-    )
+@app.get("/api/funding/{view}")
+async def proxy_funding_view(view: str, request: Request):
+    """
+    Proxy a /funding/live y a las ventanas (1h, 8h, 24h, 3d, 7d, 15d, 31d).
+    Reenvia todos los query params (min_spread_apr_percent, limit, canonical_symbol, exchange_in...).
+    """
+    if view not in FUNDING_VIEWS:
+        raise HTTPException(status_code=404, detail=f"Unknown funding view '{view}'")
+    return await _proxy_funding_get(f"/funding/{view}", request.query_params.multi_items())
 
 
 def _pick_extension(content_type: str) -> str:

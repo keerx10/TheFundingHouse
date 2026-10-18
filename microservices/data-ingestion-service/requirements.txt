@@ -7,8 +7,6 @@ motor==3.6.0
 pymongo>=4.9,<5
 
 pydantic==2.5.3
-# SDK oficial de Hyperliquid (tiene hyperliquid.info.Info)
-hyperliquid-python-sdk==0.21.0
 
 requests==2.31.0
 
