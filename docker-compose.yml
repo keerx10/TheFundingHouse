@@ -1,126 +1,24 @@
 services:
-  # ------------------------
-  # Bases de datos
-  # ------------------------
-  mongo:
-    image: mongo:6
-    container_name: tfh-mongo
+  tfh:
+    build: .
+    container_name: tfh
     restart: unless-stopped
     ports:
-      - "27017:27017"
-    environment:
-      MONGO_INITDB_ROOT_USERNAME: root
-      MONGO_INITDB_ROOT_PASSWORD: example
+      - "8080:8080"
     volumes:
-      - mongo_data:/data/db
-
-  postgres:
-    image: postgres:16
-    container_name: tfh-postgres
-    restart: unless-stopped
-    ports:
-      - "5432:5432"
+      - tfh_data:/data          # sqlite + cache de logos
     environment:
-      POSTGRES_USER: tfh
-      POSTGRES_PASSWORD: tfhpass
-      POSTGRES_DB: tfhdb
-    volumes:
-      - pg_data:/var/lib/postgresql/data
-
-  # ------------------------
-  # Microservicio: Data Ingestion
-  # ------------------------
-  data_ingestion:
-    build: ./microservices/data-ingestion-service
-    container_name: tfh-data-ingestion
-    restart: unless-stopped
-    environment:
-      MONGO_URI: mongodb://root:example@mongo:27017
-      MONGO_DB: tfh
-      PORT: 8001
-      BACKPACK_BASE_URL: https://api.backpack.exchange/api/v1
-      TIMESERIES_TTL_DAYS: 60   # retencion de funding_timeseries
-    depends_on:
-      - mongo
-    ports:
-      - "8001:8001"
-
-  # ------------------------
-  # Microservicio: Funding Analytics
-  # ------------------------
-  funding_analytics:
-    build: ./microservices/funding-analytics-service
-    container_name: tfh-funding-analytics
-    restart: unless-stopped
-    environment:
-      MONGO_URI: mongodb://root:example@mongo:27017
-      MONGO_DB: tfh
-      PORT: 8002
       # Comisiones (tanto por uno) usadas para net APR y breakeven. Ajusta a tu tier real.
       FEE_HYPERLIQUID_TAKER: 0.00045
       FEE_HYPERLIQUID_MAKER: 0.00015
       FEE_BACKPACK_TAKER: 0.0005
       FEE_BACKPACK_MAKER: 0.0002
       NET_APR_HORIZON_HOURS: 24
-      SNAPSHOT_INTERVAL_SECONDS: 60   # debe coincidir con SNAPSHOTS_EVERY_SECONDS del scheduler
-    depends_on:
-      - mongo
-    ports:
-      - "8002:8002"
-
-  # ------------------------
-  # Scheduler de funding (refrescos periodicos)
-  # ------------------------
-  funding_scheduler:
-    build:
-      context: ./microservices/funding-scheduler-service
-      dockerfile: Dockerfile
-    container_name: tfh-funding-scheduler
-    command: ["python", "-m", "funding_scheduler"]
-    restart: unless-stopped
-    environment:
-      DATA_INGESTION_BASE_URL: http://data_ingestion:8001
-      FUNDING_ANALYTICS_BASE_URL: http://funding_analytics:8002
-      MARKETS_EVERY_SECONDS: 60
-      SNAPSHOTS_EVERY_SECONDS: 60
-    depends_on:
-      - mongo
-      - data_ingestion
-      - funding_analytics
-
-  # ------------------------
-  # API Gateway
-  # ------------------------
-  api_gateway:
-    build: ./api-gateway
-    container_name: tfh-api-gateway
-    restart: unless-stopped
-    environment:
-      DATA_INGESTION_URL: http://data_ingestion:8001
-      FUNDING_ANALYTICS_URL: http://funding_analytics:8002
-      FUNDING_ANALYTICS_BASE_URL: http://funding_analytics:8002
-      PORT: 3000
-    depends_on:
-      - data_ingestion
-      - funding_analytics
-    ports:
-      - "3000:3000"
-
-  # ------------------------
-  # Frontend estático
-  # ------------------------
-  frontend:
-    image: nginx:alpine
-    container_name: tfh-frontend
-    restart: unless-stopped
-    volumes:
-      - ./frontend:/usr/share/nginx/html:ro
-      - ./frontend/nginx/default.conf:/etc/nginx/conf.d/default.conf:ro
-    ports:
-      - "8080:80"
-    depends_on:
-      - api_gateway
+      # Cadencias
+      LIVE_REFRESH_SECONDS: 60
+      SNAPSHOT_EVERY_SECONDS: 300
+      HISTORY_SYNC_SECONDS: 1800
+      HISTORY_BACKFILL_DAYS: 31
 
 volumes:
-  mongo_data:
-  pg_data:
+  tfh_data:

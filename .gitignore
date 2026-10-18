@@ -6,3 +6,6 @@ venv/
 .venv/
 .DS_Store
 api-gateway/cache/
+
+# datos locales (sqlite, logos)
+data/

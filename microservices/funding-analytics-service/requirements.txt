@@ -1,7 +1,0 @@
-fastapi
-uvicorn
-motor
-python-dotenv
-requests>=2.31.0
-pymongo
-pydantic
